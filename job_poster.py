@@ -5,6 +5,7 @@ import logging
 import argparse
 from typing import List, Optional
 from dotenv import load_dotenv
+from datetime import datetime
 
 import requests
 import schedule
@@ -32,24 +33,108 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 POSTED_FILE = os.path.join(os.path.dirname(__file__), "posted.json")
 
+# Cached MongoDB collection handle (initialized on first use if configured)
+_mongo_collection = None
+
+
+def get_mongo_collection():
+    """Return a MongoDB collection for posted IDs if configured and available, else None.
+
+    Uses env vars:
+      - MONGODB_URI (enables MongoDB mode when present)
+      - MONGODB_DB (default: jobposter)
+      - MONGODB_COLLECTION (default: posted_jobs)
+    """
+    global _mongo_collection
+
+    uri = os.environ.get("MONGODB_URI")
+    if not uri:
+        return None
+
+    if _mongo_collection is not None:
+        return _mongo_collection
+
+    try:
+        # Import locally so environments without Mongo can still run with file fallback
+        from pymongo import MongoClient
+    except Exception:
+        logging.warning("MONGODB_URI provided but pymongo is not installed. Falling back to JSON file storage.")
+        return None
+
+    db_name = os.environ.get("MONGODB_DB", "jobposter")
+    coll_name = os.environ.get("MONGODB_COLLECTION", "posted_jobs")
+
+    try:
+        client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        # Verify connection early
+        client.admin.command("ping")
+        _mongo_collection = client[db_name][coll_name]
+        logging.info("MongoDB storage enabled for posted jobs: db=%s collection=%s", db_name, coll_name)
+        return _mongo_collection
+    except Exception as e:
+        logging.error("Failed to connect to MongoDB. Falling back to JSON file storage. Error: %s", e)
+        _mongo_collection = None
+        return None
+
 
 def load_posted_ids() -> List[int]:
+    # Prefer MongoDB if configured and available
+    coll = get_mongo_collection()
+    if coll is not None:
+        try:
+            ids = [doc.get("_id") for doc in coll.find({}, {"_id": 1})]
+            # Ensure ints for consistency with existing code
+            out: List[int] = []
+            for v in ids:
+                try:
+                    out.append(int(v))
+                except Exception:
+                    continue
+            return out
+        except Exception as e:
+            logging.error("Failed to load posted IDs from MongoDB: %s", e)
+            # Fall through to file storage
+
     if not os.path.exists(POSTED_FILE):
         return []
     try:
         with open(POSTED_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        logging.error("Failed to load posted IDs: %s", e)
+        logging.error("Failed to load posted IDs from file: %s", e)
         return []
 
 
 def save_posted_ids(ids: List[int]):
+    # If MongoDB is enabled, insert only missing IDs as documents { _id: <post_id>, postedAt: <utc> }
+    coll = get_mongo_collection()
+    if coll is not None:
+        try:
+            existing = set(doc.get("_id") for doc in coll.find({}, {"_id": 1}))
+            to_insert = []
+            for pid in ids:
+                if pid not in existing:
+                    to_insert.append({"_id": int(pid), "postedAt": datetime.utcnow()})
+            if to_insert:
+                coll.insert_many(to_insert, ordered=False)
+        except Exception as e:
+            logging.error("Failed to save posted IDs to MongoDB: %s", e)
+            # As safety, also try file write below
+        else:
+            # If Mongo path succeeded, also keep the file in sync for local debugging
+            try:
+                with open(POSTED_FILE, "w", encoding="utf-8") as f:
+                    json.dump(sorted(set(ids)), f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+            return
+
+    # Fallback to file-based storage
     try:
         with open(POSTED_FILE, "w", encoding="utf-8") as f:
             json.dump(ids, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.error("Failed to save posted IDs: %s", e)
+        logging.error("Failed to save posted IDs to file: %s", e)
 
 
 def fetch_posts(use_sample: bool = False) -> List[dict]:
