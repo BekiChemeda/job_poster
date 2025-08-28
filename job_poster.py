@@ -633,9 +633,18 @@ def post_to_telegram(bot: telebot.TeleBot, channel_id: str, post: dict, summary:
 
 def process_new_posts(bot: telebot.TeleBot, channel_id: str, posts: List[dict], posted_ids: List[int], gemini_api_key: Optional[str]):
     updated = False
+    coll = get_mongo_collection()
     for raw in posts:
         p = extract_post_fields(raw)
         pid = p["id"]
+        # Check MongoDB first if available to avoid reposts across runs/instances
+        if coll is not None:
+            try:
+                if coll.find_one({"_id": int(pid)}, {"_id": 1}):
+                    continue
+            except Exception as e:
+                logging.warning("MongoDB check failed for id %s: %s", pid, e)
+        # Fallback to in-memory/file-based list
         if pid in posted_ids:
             continue
 
@@ -665,6 +674,12 @@ def process_new_posts(bot: telebot.TeleBot, channel_id: str, posts: List[dict], 
         # Post to Telegram
         try:
             post_to_telegram(bot, channel_id, p, summary)
+            # Record as posted in Mongo immediately when available
+            if coll is not None:
+                try:
+                    coll.insert_one({"_id": int(pid), "postedAt": datetime.utcnow()})
+                except Exception as e:
+                    logging.warning("MongoDB insert failed for id %s: %s", pid, e)
             posted_ids.append(pid)
             updated = True
         except Exception as e:
@@ -701,10 +716,10 @@ def run_loop(use_sample: bool = False):
     # Run once at start
     job()
 
-    # Schedule every 5 minutes
+    # Schedule every 2 minutes
     schedule.every(2).minutes.do(job)
 
-    logging.info("Started polling every 5 minutes. Press Ctrl+C to stop.")
+    logging.info("Started polling every 2 minutes. Press Ctrl+C to stop.")
     try:
         while True:
             schedule.run_pending()
