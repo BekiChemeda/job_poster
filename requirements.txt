@@ -6,3 +6,4 @@ python-dotenv>=0.21.0
 # If your Python version is incompatible with one, pip will try the other.
 google-generative-ai
 google-genai
+pymongo>=4.6.0

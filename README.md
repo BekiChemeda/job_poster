@@ -11,6 +11,12 @@ Set environment variables:
 - TELEGRAM_BOT_TOKEN
 - TELEGRAM_CHANNEL_ID
 - GEMINI_API_KEY
+  
+Optional (to use MongoDB for tracking posted jobs instead of local file):
+
+- MONGODB_URI (e.g., `mongodb+srv://user:pass@cluster.example.com/?retryWrites=true&w=majority`)
+- MONGODB_DB (default: `jobposter`)
+- MONGODB_COLLECTION (default: `posted_jobs`)
 
 Install dependencies:
 
@@ -33,4 +39,5 @@ python job_poster.py --use-sample
 Notes
 -----
 - The script stores posted post IDs in `posted.json` next to the script.
+- If `MONGODB_URI` is provided (and `pymongo` is installed), posted IDs will be stored in MongoDB collection instead. Each posted job is stored as a document with `_id` equal to the WordPress post id.
 - If Gemini client is not installed or the API call fails, posts are skipped and errors are logged to console.
