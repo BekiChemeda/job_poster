@@ -613,20 +613,17 @@ def post_to_telegram(bot: telebot.TeleBot, channel_id: str, post: dict, summary:
     # Contact sentence (corrected English) where users can contact this bot to add new vacancies
     contact_sentence = "📢@UrjiiJobsVacancy \n 🤖@UrjiiJob_bot"
 
-    # Build caption: Title, Detail (summary), Tags, mention, contact sentence
+    # Build caption: Title, Detail (summary), Tags + WP link, then channel and bot usernames
     caption_body = build_caption(title, summary)
-    full_caption = f"{caption_body}\n\n{tags_line}\n\n{contact_sentence}"
-
-    # Keyboard with Apply Here
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton(text="Apply Here", url=link))
+    # Place the WordPress link next to the tags line and before contact
+    full_caption = f"{caption_body}\n\n{tags_line} {link}\n\n{contact_sentence}"
 
     # Send safely handling caption limits and text chunking
     try:
         if featured:
-            send_photo_with_caption_safely(bot, channel_id, featured, full_caption, reply_markup=keyboard)
+            send_photo_with_caption_safely(bot, channel_id, featured, full_caption)
         else:
-            send_text_safely(bot, channel_id, full_caption, reply_markup=keyboard)
+            send_text_safely(bot, channel_id, full_caption)
     except Exception as e:
         logging.error("Failed to post to Telegram for post %s: %s", post.get("id"), e)
 
